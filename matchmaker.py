@@ -55,35 +55,35 @@ class MatchmakerService:
             # sacamos todos sus IDs para buscar las canciones que tengan cualquiera de ellas
             word_ids = [w.id for w in word_objs]
 
-            # 3. Query Base con SQLAlchemy
+            # 3. Query Base con SQLAlchemy (Blindada para Postgres)
             query = (
                 self.db.query(
                     Song.title,
                     Artist.name.label("artist_name"),
                     Genre.name.label("genre_name"),
-                    func.sum(WordFrequency.occurrence_count).label("occurrence_count") # Sumamos si aparece "sabe" y "sabes" en la misma canción
+                    func.sum(WordFrequency.occurrence_count).label("occurrence_count")
                 )
                 .join(WordFrequency, Song.id == WordFrequency.song_id)
                 .join(Artist, Song.artist_id == Artist.id)
                 .join(Genre, Artist.genre_id == Genre.id)
-                .filter(WordFrequency.word_id.in_(word_ids)) # Buscamos cualquiera de las variaciones
-                .group_by(Song.id, Artist.id, Genre.id) # Agrupamos para no tener duplicados
+                .filter(WordFrequency.word_id.in_(word_ids))
+                # 🚨 Postgres exige agrupar por TODAS las columnas que no son sumas/restas
+                .group_by(Song.id, Song.title, Artist.id, Artist.name, Genre.id, Genre.name)
             )
 
-            # 🚨 3. APLICAMOS LOS FILTROS DINÁMICOS (La Magia) 🚨
-            if genre:
-                # Filtramos comparando con la tabla Genre usando ilike (ignora mayúsculas/minúsculas)
-                query = query.filter(Genre.name.ilike(f"%{genre}%"))
+            # 🚨 APLICAMOS LOS FILTROS DINÁMICOS 🚨
+            if genre and genre.strip():
+                query = query.filter(Genre.name.ilike(f"%{genre.strip()}%"))
 
-            if year:
+            if year and year.strip():
                 if year == 'retro':
-                    query = query.filter(Song.release_year < 2010)
+                    query = query.filter(Song.release_year.isnot(None), Song.release_year < 2010)
                 else:
-                    # Convertimos el string a entero para compararlo en la BD
                     query = query.filter(Song.release_year == int(year))
 
-            # 4. Terminamos la query agregando el ordenamiento y el límite
-            query = query.order_by(desc("occurrence_count")).limit(limit_per_genre * 5)
+            # 4. El ordenamiento (La solución al error f405)
+            # En vez de un string, le pasamos la misma función de suma exacta al desc()
+            query = query.order_by(desc(func.sum(WordFrequency.occurrence_count))).limit(limit_per_genre * 5)
 
             results = query.all()
             
