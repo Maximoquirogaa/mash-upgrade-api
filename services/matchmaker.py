@@ -35,70 +35,70 @@ class MatchmakerService:
         self.db = db_session
 
     # 👇 2. Modificamos la firma para recibir genre y year
-def get_acapella_bridges(self, target_word: str, genre: Optional[str] = None, year: Optional[str] = None, limit_per_genre: int = 3) -> List[BridgeResult]:
-        
-        # 1. 🚨 LA ASPIRADORA EN EL BUSCADOR 🚨
-        # Limpiamos lo que escribió el usuario (pasamos a minúscula y matamos tildes)
-        target_word = target_word.lower().strip()
-        target_word = ''.join(c for c in unicodedata.normalize('NFD', target_word) if unicodedata.category(c) != 'Mn')
-
-        # 2. 🚨 BÚSQUEDA FLEXIBLE (SABE vs SABES) 🚨
-        # En vez de usar "==", usamos "ilike" con el comodín "%". 
-        # Si busca "sabe", va a encontrar "sabe", "sabes", "sabemos", "saben".
-        word_objs = self.db.query(Dictionary).filter(Dictionary.word_text.ilike(f"{target_word}%")).all()
-        
-        if not word_objs:
-            logger.warning(f"La raíz léxica '{target_word}' no existe en la BD.")
-            return []
-
-        # Como ahora podemos encontrar múltiples palabras (ej: sabe, sabes), 
-        # sacamos todos sus IDs para buscar las canciones que tengan cualquiera de ellas
-        word_ids = [w.id for w in word_objs]
-
-        # 3. Query Base con SQLAlchemy
-        query = (
-            self.db.query(
-                Song.title,
-                Artist.name.label("artist_name"),
-                Genre.name.label("genre_name"),
-                func.sum(WordFrequency.occurrence_count).label("occurrence_count") # Sumamos si aparece "sabe" y "sabes" en la misma canción
+    def get_acapella_bridges(self, target_word: str, genre: Optional[str] = None, year: Optional[str] = None, limit_per_genre: int = 3) -> List[BridgeResult]:
+            
+            # 1. 🚨 LA ASPIRADORA EN EL BUSCADOR 🚨
+            # Limpiamos lo que escribió el usuario (pasamos a minúscula y matamos tildes)
+            target_word = target_word.lower().strip()
+            target_word = ''.join(c for c in unicodedata.normalize('NFD', target_word) if unicodedata.category(c) != 'Mn')
+    
+            # 2. 🚨 BÚSQUEDA FLEXIBLE (SABE vs SABES) 🚨
+            # En vez de usar "==", usamos "ilike" con el comodín "%". 
+            # Si busca "sabe", va a encontrar "sabe", "sabes", "sabemos", "saben".
+            word_objs = self.db.query(Dictionary).filter(Dictionary.word_text.ilike(f"{target_word}%")).all()
+            
+            if not word_objs:
+                logger.warning(f"La raíz léxica '{target_word}' no existe en la BD.")
+                return []
+    
+            # Como ahora podemos encontrar múltiples palabras (ej: sabe, sabes), 
+            # sacamos todos sus IDs para buscar las canciones que tengan cualquiera de ellas
+            word_ids = [w.id for w in word_objs]
+    
+            # 3. Query Base con SQLAlchemy
+            query = (
+                self.db.query(
+                    Song.title,
+                    Artist.name.label("artist_name"),
+                    Genre.name.label("genre_name"),
+                    func.sum(WordFrequency.occurrence_count).label("occurrence_count") # Sumamos si aparece "sabe" y "sabes" en la misma canción
+                )
+                .join(WordFrequency, Song.id == WordFrequency.song_id)
+                .join(Artist, Song.artist_id == Artist.id)
+                .join(Genre, Artist.genre_id == Genre.id)
+                .filter(WordFrequency.word_id.in_(word_ids)) # Buscamos cualquiera de las variaciones
+                .group_by(Song.id, Artist.id, Genre.id) # Agrupamos para no tener duplicados
             )
-            .join(WordFrequency, Song.id == WordFrequency.song_id)
-            .join(Artist, Song.artist_id == Artist.id)
-            .join(Genre, Artist.genre_id == Genre.id)
-            .filter(WordFrequency.word_id.in_(word_ids)) # Buscamos cualquiera de las variaciones
-            .group_by(Song.id, Artist.id, Genre.id) # Agrupamos para no tener duplicados
-        )
-
-        # 🚨 3. APLICAMOS LOS FILTROS DINÁMICOS (La Magia) 🚨
-        if genre:
-            # Filtramos comparando con la tabla Genre usando ilike (ignora mayúsculas/minúsculas)
-            query = query.filter(Genre.name.ilike(f"%{genre}%"))
-
-        if year:
-            if year == 'retro':
-                query = query.filter(Song.release_year < 2010)
-            else:
-                # Convertimos el string a entero para compararlo en la BD
-                query = query.filter(Song.release_year == int(year))
-
-        # 4. Terminamos la query agregando el ordenamiento y el límite
-        query = query.order_by(desc(WordFrequency.occurrence_count)).limit(limit_per_genre * 5)
-
-        results = query.all()
-        
-        # 5. Mapeo al DTO
-        bridges = [
-            BridgeResult(
-                word=target_word,
-                song_title=row.title,
-                artist_name=row.artist_name,
-                genre=row.genre_name,
-                occurrences=row.occurrence_count
-            )
-            for row in results
-        ]
-        return bridges
+    
+            # 🚨 3. APLICAMOS LOS FILTROS DINÁMICOS (La Magia) 🚨
+            if genre:
+                # Filtramos comparando con la tabla Genre usando ilike (ignora mayúsculas/minúsculas)
+                query = query.filter(Genre.name.ilike(f"%{genre}%"))
+    
+            if year:
+                if year == 'retro':
+                    query = query.filter(Song.release_year < 2010)
+                else:
+                    # Convertimos el string a entero para compararlo en la BD
+                    query = query.filter(Song.release_year == int(year))
+    
+            # 4. Terminamos la query agregando el ordenamiento y el límite
+            query = query.order_by(desc(WordFrequency.occurrence_count)).limit(limit_per_genre * 5)
+    
+            results = query.all()
+            
+            # 5. Mapeo al DTO
+            bridges = [
+                BridgeResult(
+                    word=target_word,
+                    song_title=row.title,
+                    artist_name=row.artist_name,
+                    genre=row.genre_name,
+                    occurrences=row.occurrence_count
+                )
+                for row in results
+            ]
+            return bridges
 
     def get_harmonic_twins(self, song_title: str, top_dna_words: int = 10) -> List[TwinResult]:
         """
